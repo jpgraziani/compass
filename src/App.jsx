@@ -204,6 +204,149 @@ function Btn({ children, onClick, color, variant='solid', small, disabled, full 
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// ─── AI IMAGE SCAN ────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function AIScanModal({ list, onAdd, onClose }) {
+  const [status, setStatus]   = useState('idle') // idle | scanning | done | error
+  const [items, setItems]     = useState([])
+  const [selected, setSelected] = useState(new Set())
+  const [errMsg, setErrMsg]   = useState('')
+  const fileRef = useRef()
+
+  async function handleFile(file) {
+    if (!file) return
+    setStatus('scanning')
+    setItems([]); setSelected(new Set()); setErrMsg('')
+
+    try {
+      const base64 = await new Promise((res, rej) => {
+        const r = new FileReader()
+        r.onload = () => res(r.result.split(',')[1])
+        r.onerror = () => rej(new Error('Read failed'))
+        r.readAsDataURL(file)
+      })
+
+      const apiKey = import.meta.env.VITE_ANTHROPIC_KEY
+      const resp = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true',
+        },
+        body: JSON.stringify({
+          model: 'claude-opus-4-5',
+          max_tokens: 1024,
+          messages: [{
+            role: 'user',
+            content: [
+              { type: 'image', source: { type: 'base64', media_type: file.type || 'image/jpeg', data: base64 } },
+              { type: 'text', text: `Extract all list items, tasks, or products visible in this image. Return ONLY a JSON array of strings, nothing else. Example: ["milk","eggs","bread"]. If nothing list-like is found, return [].` }
+            ]
+          }]
+        })
+      })
+
+      const data = await resp.json()
+      const raw = data.content?.[0]?.text || '[]'
+      const clean = raw.replace(/```json|```/g, '').trim()
+      const parsed = JSON.parse(clean)
+      if (!Array.isArray(parsed)) throw new Error('Unexpected response')
+      setItems(parsed)
+      setSelected(new Set(parsed.map((_, i) => i)))
+      setStatus('done')
+    } catch (e) {
+      setErrMsg(e.message || 'Something went wrong')
+      setStatus('error')
+    }
+  }
+
+  function toggleItem(i) {
+    setSelected(s => { const n = new Set(s); n.has(i) ? n.delete(i) : n.add(i); return n })
+  }
+
+  function addSelected() {
+    const toAdd = items.filter((_, i) => selected.has(i))
+    toAdd.forEach(text => onAdd({ id: genId(), text, done: false, priority: 'medium' }))
+    onClose()
+  }
+
+  return (
+    <Modal title={`📷 Scan into ${list.title}`} onClose={onClose}>
+      {status === 'idle' && (
+        <div>
+          <p style={{ fontSize: 13, color: C.textMd, marginBottom: 18, lineHeight: 1.6 }}>
+            Take a photo or upload an image of a handwritten list, receipt, or notes — Claude will extract the items for you.
+          </p>
+          <input ref={fileRef} type="file" accept="image/*" capture="environment" style={{ display: 'none' }} onChange={e => handleFile(e.target.files[0])} />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <button onClick={() => { fileRef.current.removeAttribute('capture'); fileRef.current.click() }}
+              style={{ padding: '14px 0', background: `linear-gradient(135deg,${list.color},${list.color}dd)`, border: 'none', borderRadius: 12, color: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer', boxShadow: `0 3px 12px ${list.color}33` }}>
+              📁 Upload Image
+            </button>
+            <button onClick={() => { fileRef.current.setAttribute('capture', 'environment'); fileRef.current.click() }}
+              style={{ padding: '14px 0', background: 'transparent', border: `1.5px solid ${list.color}55`, borderRadius: 12, color: list.color, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+              📷 Take Photo
+            </button>
+          </div>
+        </div>
+      )}
+
+      {status === 'scanning' && (
+        <div style={{ textAlign: 'center', padding: '32px 0' }}>
+          <div style={{ fontSize: 36, marginBottom: 12, animation: 'shimmer 1.2s infinite' }}>🔍</div>
+          <div style={{ fontFamily: "'Lora',serif", fontSize: 15, color: C.textMd }}>Scanning image...</div>
+          <div style={{ fontSize: 12, color: C.textLt, marginTop: 6 }}>Claude is reading your list</div>
+        </div>
+      )}
+
+      {status === 'error' && (
+        <div style={{ textAlign: 'center', padding: '24px 0' }}>
+          <div style={{ fontSize: 32, marginBottom: 10 }}>⚠️</div>
+          <div style={{ fontSize: 13, color: C.accent, marginBottom: 16 }}>{errMsg}</div>
+          <Btn onClick={() => setStatus('idle')} color={list.color}>Try Again</Btn>
+        </div>
+      )}
+
+      {status === 'done' && (
+        <div>
+          {items.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '24px 0' }}>
+              <div style={{ fontSize: 13, color: C.textMd, marginBottom: 16 }}>No items found in the image.</div>
+              <Btn onClick={() => setStatus('idle')} color={list.color}>Try Another</Btn>
+            </div>
+          ) : (
+            <>
+              <div style={{ fontSize: 12, color: C.textMd, marginBottom: 12 }}>
+                Found <strong>{items.length}</strong> item{items.length !== 1 ? 's' : ''}. Tap to deselect any you don't want.
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 7, marginBottom: 18, maxHeight: 280, overflowY: 'auto' }}>
+                {items.map((item, i) => (
+                  <div key={i} onClick={() => toggleItem(i)} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', background: selected.has(i) ? `${list.color}10` : C.bgAlt, border: `1.5px solid ${selected.has(i) ? list.color + '55' : C.border}`, borderRadius: 10, cursor: 'pointer', transition: 'all 0.15s' }}>
+                    <div style={{ width: 18, height: 18, borderRadius: 5, background: selected.has(i) ? list.color : 'transparent', border: `1.5px solid ${selected.has(i) ? list.color : C.borderMd}`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, transition: 'all 0.15s' }}>
+                      {selected.has(i) && <svg width="9" height="7" viewBox="0 0 10 8" fill="none"><path d="M1 4l3 3 5-6" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>}
+                    </div>
+                    <span style={{ fontSize: 13, color: selected.has(i) ? C.text : C.textLt, textDecoration: selected.has(i) ? 'none' : 'line-through' }}>{item}</span>
+                  </div>
+                ))}
+              </div>
+              <div style={{ display: 'flex', gap: 9 }}>
+                <button onClick={addSelected} disabled={selected.size === 0} style={{ flex: 1, padding: '13px 0', background: selected.size === 0 ? C.bgAlt : `linear-gradient(135deg,${list.color},${list.color}dd)`, border: 'none', borderRadius: 12, color: selected.size === 0 ? C.textLt : '#fff', fontSize: 13, fontWeight: 600, cursor: selected.size === 0 ? 'default' : 'pointer', boxShadow: selected.size > 0 ? `0 3px 12px ${list.color}33` : 'none', transition: 'all 0.2s' }}>
+                  Add {selected.size} item{selected.size !== 1 ? 's' : ''}
+                </button>
+                <Btn onClick={() => setStatus('idle')} variant="outline" color={C.textMd}>Retry</Btn>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </Modal>
+  )
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // ─── BOARD TAB ────────────────────────────────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -429,6 +572,8 @@ function BoardTab({ lists, setLists }) {
     }))
   }
 
+  const [scanList, setScanList] = useState(null)
+
   const totalP = lists.reduce((a,l)=>a+l.cards.filter(c=>!c.done).length,0)
   const totalH = lists.reduce((a,l)=>a+l.cards.filter(c=>!c.done&&c.priority==='high').length,0)
 
@@ -477,6 +622,7 @@ function BoardTab({ lists, setLists }) {
                             <div style={{ fontFamily:"'Lora',serif", fontSize:15, fontWeight:600, color:C.text }}>{list.title}</div>
                             <div style={{ fontSize:11, color:C.textLt, marginTop:1 }}>{pending} pending · tap to edit</div>
                           </div>
+                          <button onClick={()=>setScanList(list)} title="Scan image into list" style={{ width:30, height:30, borderRadius:8, background:`${list.color}12`, border:`1.5px solid ${list.color}33`, color:list.color, fontSize:14, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, marginRight:4 }}>📷</button>
                           <div style={{ width:24, height:24, borderRadius:'50%', background:`${list.color}15`, border:`1.5px solid ${list.color}44`, color:list.color, fontSize:11, fontWeight:600, display:'flex', alignItems:'center', justifyContent:'center' }}>{pending}</div>
                         </div>
                         <div style={{ padding:'8px 10px 10px', display:'flex', flexDirection:'column', gap:6 }}>
@@ -503,6 +649,7 @@ function BoardTab({ lists, setLists }) {
       {modal?.type==='addCard'&&<Modal title={`Add to ${modal.list.title}`} onClose={()=>setModal(null)}><CardForm listColor={modal.list.color} submitLabel="Add Item" onSubmit={d=>{addCard(modal.list.id,{id:genId(),done:false,...d});setModal(null)}}/></Modal>}
       {modal?.type==='newList'&&<Modal title="New List" onClose={()=>setModal(null)}><ListForm submitLabel="Create List" onSubmit={d=>{addList(d);setModal(null)}}/></Modal>}
       {modal?.type==='editList'&&<Modal title="Edit List" onClose={()=>setModal(null)}><ListForm initial={modal.list} submitLabel="Save Changes" onSubmit={d=>{updateList(modal.list.id,d);setModal(null)}} onDelete={()=>{removeList(modal.list.id);setModal(null)}} onClearAll={()=>{clearCards(modal.list.id);setModal(null)}}/></Modal>}
+      {scanList&&<AIScanModal list={scanList} onAdd={card=>addCard(scanList.id,card)} onClose={()=>setScanList(null)}/>}
     </div>
   )
 }
