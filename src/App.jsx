@@ -220,40 +220,55 @@ function AIScanModal({ list, onAdd, onClose }) {
     setItems([]); setSelected(new Set()); setErrMsg('')
 
     try {
+      const mediaType = file.type && file.type.startsWith('image/') ? file.type : 'image/jpeg'
       const base64 = await new Promise((res, rej) => {
         const r = new FileReader()
         r.onload = () => res(r.result.split(',')[1])
-        r.onerror = () => rej(new Error('Read failed'))
+        r.onerror = () => rej(new Error('Could not read image file'))
         r.readAsDataURL(file)
       })
 
       const apiKey = import.meta.env.VITE_ANTHROPIC_KEY
-      const resp = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': apiKey,
-          'anthropic-version': '2023-06-01',
-          'anthropic-dangerous-direct-browser-access': 'true',
-        },
-        body: JSON.stringify({
-          model: 'claude-opus-4-5',
-          max_tokens: 1024,
-          messages: [{
-            role: 'user',
-            content: [
-              { type: 'image', source: { type: 'base64', media_type: file.type || 'image/jpeg', data: base64 } },
-              { type: 'text', text: `Extract all list items, tasks, or products visible in this image. Return ONLY a JSON array of strings, nothing else. Example: ["milk","eggs","bread"]. If nothing list-like is found, return [].` }
-            ]
-          }]
+      if (!apiKey) throw new Error('API key not set (VITE_ANTHROPIC_KEY)')
+
+      let resp
+      try {
+        resp = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': apiKey,
+            'anthropic-version': '2023-06-01',
+            'anthropic-dangerous-direct-browser-access': 'true',
+          },
+          body: JSON.stringify({
+            model: 'claude-haiku-4-5-20251001',
+            max_tokens: 1024,
+            messages: [{
+              role: 'user',
+              content: [
+                { type: 'image', source: { type: 'base64', media_type: mediaType, data: base64 } },
+                { type: 'text', text: 'Extract all list items, tasks, or products visible in this image. Return ONLY a JSON array of strings, no explanation, no markdown. Example: ["milk","eggs","bread"]. If nothing list-like is found, return [].' }
+              ]
+            }]
+          })
         })
-      })
+      } catch (netErr) {
+        throw new Error('Network error: ' + netErr.message)
+      }
+
+      if (!resp.ok) {
+        const errBody = await resp.text().catch(() => '')
+        throw new Error('API error ' + resp.status + ': ' + errBody.slice(0, 120))
+      }
 
       const data = await resp.json()
+      if (data.error) throw new Error(data.error.message || 'API returned error')
+
       const raw = data.content?.[0]?.text || '[]'
       const clean = raw.replace(/```json|```/g, '').trim()
       const parsed = JSON.parse(clean)
-      if (!Array.isArray(parsed)) throw new Error('Unexpected response')
+      if (!Array.isArray(parsed)) throw new Error('Unexpected response format')
       setItems(parsed)
       setSelected(new Set(parsed.map((_, i) => i)))
       setStatus('done')
@@ -622,7 +637,6 @@ function BoardTab({ lists, setLists }) {
                             <div style={{ fontFamily:"'Lora',serif", fontSize:15, fontWeight:600, color:C.text }}>{list.title}</div>
                             <div style={{ fontSize:11, color:C.textLt, marginTop:1 }}>{pending} pending · tap to edit</div>
                           </div>
-                          <button onClick={()=>setScanList(list)} title="Scan image into list" style={{ width:30, height:30, borderRadius:8, background:`${list.color}12`, border:`1.5px solid ${list.color}33`, color:list.color, fontSize:14, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, marginRight:4 }}>📷</button>
                           <div style={{ width:24, height:24, borderRadius:'50%', background:`${list.color}15`, border:`1.5px solid ${list.color}44`, color:list.color, fontSize:11, fontWeight:600, display:'flex', alignItems:'center', justifyContent:'center' }}>{pending}</div>
                         </div>
                         <div style={{ padding:'8px 10px 10px', display:'flex', flexDirection:'column', gap:6 }}>
@@ -633,7 +647,10 @@ function BoardTab({ lists, setLists }) {
                               return <SortableCard key={card.id} card={card} listColor={list.color} pri={pri} onToggle={()=>updateCard(list.id,card.id,{done:!card.done})} onEdit={()=>setModal({type:'editCard',listId:list.id,card})} onDelete={()=>removeCard(list.id,card.id)}/>
                             })}
                           </SortableContext>
-                          <button onClick={()=>setModal({type:'addCard',list})} style={{ marginTop:3, padding:'9px 0', background:'transparent', border:`1.5px dashed ${list.color}33`, borderRadius:10, color:list.color, fontSize:12, fontWeight:500, cursor:'pointer', opacity:0.8 }}>+ Add item</button>
+                          <div style={{ display:'flex', gap:6, marginTop:3 }}>
+                            <button onClick={()=>setModal({type:'addCard',list})} style={{ flex:1, padding:'9px 0', background:'transparent', border:`1.5px dashed ${list.color}33`, borderRadius:10, color:list.color, fontSize:12, fontWeight:500, cursor:'pointer', opacity:0.8 }}>+ Add item</button>
+                            <button onClick={()=>setScanList(list)} title="Scan image" style={{ padding:'9px 12px', background:'transparent', border:`1.5px dashed ${list.color}33`, borderRadius:10, color:list.color, fontSize:14, cursor:'pointer', opacity:0.8 }}>📷</button>
+                          </div>
                         </div>
                       </div>
                     )}
