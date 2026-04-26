@@ -1225,7 +1225,8 @@ export default function App() {
       {id:'shopping',title:'Shopping',icon:'◈',color:'#3BA89A',cards:[{id:'s1',text:'Add your first item',done:false,priority:'medium'}]},
       {id:'todo',title:'To-Do',icon:'◉',color:'#D95F3B',cards:[{id:'t1',text:'Get things done',done:false,priority:'high'}]},
     ])
-    const {data:owned}=await supabase.from('trips').select('*').eq('user_id',u.id)
+    const {data:owned, error:ownedErr}=await supabase.from('trips').select('*').eq('user_id',u.id)
+    if(ownedErr) console.error('loadTrips error:', ownedErr)
     const {data:memberships}=await supabase.from('trip_members').select('trip_id').eq('user_id',u.id)
     let shared=[]
     if(memberships?.length){
@@ -1233,7 +1234,7 @@ export default function App() {
       shared=st||[]
     }
     const all=[...(owned||[]),...shared].filter((t,i,a)=>a.findIndex(x=>x.id===t.id)===i)
-    setTrips(all.map(r=>({...r.data,_owner:r.user_id})))
+    setTrips(all.map(r=>({ ...r.data, id: r.id, _owner: r.user_id })))
     setLoading(false)
   }
 
@@ -1249,10 +1250,12 @@ export default function App() {
 
   async function saveTrip(trip) {
     const { _owner, ...tripData } = trip
-    await supabase.from('trips').upsert(
-      { id: trip.id, user_id: _owner || user.id, data: { ...tripData, _owner: _owner || user.id } },
+    const ownerId = _owner || user.id
+    const { error } = await supabase.from('trips').upsert(
+      { id: trip.id, user_id: ownerId, data: tripData },
       { onConflict: 'id' }
     )
+    if (error) console.error('saveTrip error:', error)
   }
   async function deleteTrip(id) {
     await supabase.from('trip_members').delete().eq('trip_id', id)
