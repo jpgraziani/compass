@@ -230,7 +230,10 @@ function AIScanModal({ list, onAdd, onClose }) {
 
       const resp = await fetch('https://ppqccuystccddsjqwthd.supabase.co/functions/v1/claude-proxy', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer sb_publishable_ckEIZ-dOXrbwRF3FqYxgDg__b_qX7kq',
+        },
         body: JSON.stringify({
           imageBase64: base64,
           mediaType,
@@ -364,7 +367,10 @@ function CardForm({ initial, listColor, submitLabel, onSubmit, onDelete }) {
       })
       const resp = await fetch('https://ppqccuystccddsjqwthd.supabase.co/functions/v1/claude-proxy', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer sb_publishable_ckEIZ-dOXrbwRF3FqYxgDg__b_qX7kq',
+        },
         body: JSON.stringify({
           imageBase64: base64,
           mediaType: file.type || 'image/jpeg',
