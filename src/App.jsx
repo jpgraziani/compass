@@ -366,11 +366,61 @@ function AIScanModal({ list, onAdd, onClose }) {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 function CardForm({ initial, listColor, submitLabel, onSubmit, onDelete }) {
-  const [text, setText]    = useState(initial?.text||'')
-  const [priority, setPri] = useState(initial?.priority||'medium')
+  const [text, setText]         = useState(initial?.text||'')
+  const [priority, setPri]      = useState(initial?.priority||'medium')
+  const [scanning, setScanning] = useState(false)
+  const fileRef = useRef()
+
+  async function handleScan(file) {
+    if (!file) return
+    setScanning(true)
+    try {
+      const apiKey = import.meta.env.VITE_ANTHROPIC_KEY
+      if (!apiKey) throw new Error('API key not set')
+      const base64 = await new Promise((res, rej) => {
+        const r = new FileReader()
+        r.onload = () => res(r.result.split(',')[1])
+        r.onerror = rej
+        r.readAsDataURL(file)
+      })
+      const resp = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true',
+        },
+        body: JSON.stringify({
+          model: 'claude-haiku-4-5-20251001',
+          max_tokens: 512,
+          messages: [{
+            role: 'user',
+            content: [
+              { type: 'image', source: { type: 'base64', media_type: file.type||'image/jpeg', data: base64 } },
+              { type: 'text', text: 'Summarize the key information from this image into a concise task or note — one or two sentences max. Return only the text, no explanation.' }
+            ]
+          }]
+        })
+      })
+      const data = await resp.json()
+      const extracted = data.content?.[0]?.text?.trim() || ''
+      if (extracted) setText(prev => prev ? prev + ' ' + extracted : extracted)
+    } catch(e) {
+      alert('Scan failed: ' + e.message)
+    }
+    setScanning(false)
+  }
+
   return (
     <>
-      <textarea autoFocus value={text} onChange={e=>setText(e.target.value)} rows={3} placeholder="What needs to be done..." style={{...fi, resize:'none', marginBottom:14, lineHeight:1.6}}/>
+      <div style={{ position:'relative', marginBottom:14 }}>
+        <textarea autoFocus value={text} onChange={e=>setText(e.target.value)} rows={3} placeholder="What needs to be done..." style={{...fi, resize:'none', lineHeight:1.6, paddingRight:44}}/>
+        <input ref={fileRef} type="file" accept="image/*" style={{ display:'none' }} onChange={e=>handleScan(e.target.files[0])}/>
+        <button onClick={()=>fileRef.current.click()} disabled={scanning} title="Scan image to fill" style={{ position:'absolute', top:10, right:10, background:scanning?C.bgAlt:`${listColor}15`, border:`1px solid ${listColor}44`, borderRadius:8, width:30, height:30, display:'flex', alignItems:'center', justifyContent:'center', cursor:'pointer', fontSize:15 }}>
+          {scanning ? '⏳' : '📷'}
+        </button>
+      </div>
       <div style={{ marginBottom:18 }}>
         <div style={{ fontSize:11, fontWeight:600, letterSpacing:1.2, color:C.textLt, marginBottom:8, textTransform:'uppercase' }}>Priority</div>
         <div style={{ display:'flex', gap:8 }}>
