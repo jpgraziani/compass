@@ -228,25 +228,15 @@ function AIScanModal({ list, onAdd, onClose }) {
         r.readAsDataURL(file)
       })
 
-      const resp = await fetch('https://ppqccuystccddsjqwthd.supabase.co/functions/v1/claude-proxy', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer sb_publishable_ckEIZ-dOXrbwRF3FqYxgDg__b_qX7kq',
-        },
-        body: JSON.stringify({
+      const { data, error: fnError } = await supabase.functions.invoke('claude-proxy', {
+        body: {
           imageBase64: base64,
           mediaType,
           prompt: 'Extract all list items, tasks, or products visible in this image. Return ONLY a JSON array of strings, no explanation, no markdown. Example: ["milk","eggs","bread"]. If nothing list-like is found, return [].'
-        })
+        }
       })
 
-      if (!resp.ok) {
-        const errBody = await resp.text().catch(() => '')
-        throw new Error('API error ' + resp.status + ': ' + errBody.slice(0, 120))
-      }
-
-      const data = await resp.json()
+      if (fnError) throw new Error(fnError.message || 'Function error')
       if (data.error) throw new Error(data.error.message || 'API returned error')
 
       const raw = data.content?.[0]?.text || '[]'
@@ -365,20 +355,15 @@ function CardForm({ initial, listColor, submitLabel, onSubmit, onDelete }) {
         r.onerror = rej
         r.readAsDataURL(file)
       })
-      const resp = await fetch('https://ppqccuystccddsjqwthd.supabase.co/functions/v1/claude-proxy', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer sb_publishable_ckEIZ-dOXrbwRF3FqYxgDg__b_qX7kq',
-        },
-        body: JSON.stringify({
+      const { data, error: fnError } = await supabase.functions.invoke('claude-proxy', {
+        body: {
           imageBase64: base64,
           mediaType: file.type || 'image/jpeg',
           prompt: 'Summarize the key information from this image into a concise task or note — one or two sentences max. Return only the text, no explanation.'
-        })
+        }
       })
-      const data = await resp.json()
-      const extracted = data.content?.[0]?.text?.trim() || ''
+      if (fnError) throw new Error(fnError.message)
+      const extracted = data?.content?.[0]?.text?.trim() || ''
       if (extracted) setText(prev => prev ? prev + ' ' + extracted : extracted)
     } catch(e) {
       alert('Scan failed: ' + e.message)
