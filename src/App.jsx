@@ -228,34 +228,15 @@ function AIScanModal({ list, onAdd, onClose }) {
         r.readAsDataURL(file)
       })
 
-      const apiKey = import.meta.env.VITE_ANTHROPIC_KEY
-      if (!apiKey) throw new Error('API key not set (VITE_ANTHROPIC_KEY)')
-
-      let resp
-      try {
-        resp = await fetch('https://api.anthropic.com/v1/messages', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': apiKey,
-            'anthropic-version': '2023-06-01',
-            'anthropic-dangerous-direct-browser-access': 'true',
-          },
-          body: JSON.stringify({
-            model: 'claude-haiku-4-5-20251001',
-            max_tokens: 1024,
-            messages: [{
-              role: 'user',
-              content: [
-                { type: 'image', source: { type: 'base64', media_type: mediaType, data: base64 } },
-                { type: 'text', text: 'Extract all list items, tasks, or products visible in this image. Return ONLY a JSON array of strings, no explanation, no markdown. Example: ["milk","eggs","bread"]. If nothing list-like is found, return [].' }
-              ]
-            }]
-          })
+      const resp = await fetch('https://ppqccuystccddsjqwthd.supabase.co/functions/v1/claude-proxy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          imageBase64: base64,
+          mediaType,
+          prompt: 'Extract all list items, tasks, or products visible in this image. Return ONLY a JSON array of strings, no explanation, no markdown. Example: ["milk","eggs","bread"]. If nothing list-like is found, return [].'
         })
-      } catch (netErr) {
-        throw new Error('Network error: ' + netErr.message)
-      }
+      })
 
       if (!resp.ok) {
         const errBody = await resp.text().catch(() => '')
@@ -375,32 +356,19 @@ function CardForm({ initial, listColor, submitLabel, onSubmit, onDelete }) {
     if (!file) return
     setScanning(true)
     try {
-      const apiKey = import.meta.env.VITE_ANTHROPIC_KEY
-      if (!apiKey) throw new Error('API key not set')
       const base64 = await new Promise((res, rej) => {
         const r = new FileReader()
         r.onload = () => res(r.result.split(',')[1])
         r.onerror = rej
         r.readAsDataURL(file)
       })
-      const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      const resp = await fetch('https://ppqccuystccddsjqwthd.supabase.co/functions/v1/claude-proxy', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': apiKey,
-          'anthropic-version': '2023-06-01',
-          'anthropic-dangerous-direct-browser-access': 'true',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model: 'claude-haiku-4-5-20251001',
-          max_tokens: 512,
-          messages: [{
-            role: 'user',
-            content: [
-              { type: 'image', source: { type: 'base64', media_type: file.type||'image/jpeg', data: base64 } },
-              { type: 'text', text: 'Summarize the key information from this image into a concise task or note — one or two sentences max. Return only the text, no explanation.' }
-            ]
-          }]
+          imageBase64: base64,
+          mediaType: file.type || 'image/jpeg',
+          prompt: 'Summarize the key information from this image into a concise task or note — one or two sentences max. Return only the text, no explanation.'
         })
       })
       const data = await resp.json()
