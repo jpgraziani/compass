@@ -228,25 +228,15 @@ function AIScanModal({ list, onAdd, onClose }) {
         r.readAsDataURL(file)
       })
 
-      const resp = await fetch('https://ppqccuystccddsjqwthd.supabase.co/functions/v1/claude-proxy', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer sb_publishable_ckEIZ-dOXrbwRF3FqYxgDg__b_qX7kq',
-        },
-        body: JSON.stringify({
+      const { data, error: fnError } = await supabase.functions.invoke('claude-proxy', {
+        body: {
           imageBase64: base64,
           mediaType,
           prompt: 'Extract all list items, tasks, or products visible in this image. Return ONLY a JSON array of strings, no explanation, no markdown. Example: ["milk","eggs","bread"]. If nothing list-like is found, return [].'
-        })
+        }
       })
 
-      if (!resp.ok) {
-        const errBody = await resp.text().catch(() => '')
-        throw new Error('API error ' + resp.status + ': ' + errBody.slice(0, 120))
-      }
-
-      const data = await resp.json()
+      if (fnError) throw new Error(fnError.message || 'Function error')
       if (data.error) throw new Error(data.error.message || 'API returned error')
 
       const raw = data.content?.[0]?.text || '[]'
@@ -365,20 +355,15 @@ function CardForm({ initial, listColor, submitLabel, onSubmit, onDelete }) {
         r.onerror = rej
         r.readAsDataURL(file)
       })
-      const resp = await fetch('https://ppqccuystccddsjqwthd.supabase.co/functions/v1/claude-proxy', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer sb_publishable_ckEIZ-dOXrbwRF3FqYxgDg__b_qX7kq',
-        },
-        body: JSON.stringify({
+      const { data, error: fnError } = await supabase.functions.invoke('claude-proxy', {
+        body: {
           imageBase64: base64,
           mediaType: file.type || 'image/jpeg',
           prompt: 'Summarize the key information from this image into a concise task or note — one or two sentences max. Return only the text, no explanation.'
-        })
+        }
       })
-      const data = await resp.json()
-      const extracted = data.content?.[0]?.text?.trim() || ''
+      if (fnError) throw new Error(fnError.message)
+      const extracted = data?.content?.[0]?.text?.trim() || ''
       if (extracted) setText(prev => prev ? prev + ' ' + extracted : extracted)
     } catch(e) {
       alert('Scan failed: ' + e.message)
@@ -852,50 +837,13 @@ function ItinerarySection({ trip, itinerary, onChange }) {
 }
 
 function PackingSection({ packing, onChange, tripColor }) {
-  const [text,setText]=useState(''), [cat,setCat]=useState('Essentials'), [scanning,setScanning]=useState(false)
-  const fileRef = useRef()
+  const [text,setText]=useState(''), [cat,setCat]=useState('Essentials')
   const cats=['Essentials','Clothing','Toiletries','Electronics','Documents','Other']
   function add() { if(!text.trim())return; onChange([...packing,{id:genId(),text:text.trim(),category:cat,done:false}]); setText('') }
   const grouped=cats.reduce((acc,c)=>{ const items=packing.filter(p=>p.category===c); if(items.length)acc[c]=items; return acc },{})
   const tot=packing.length, done=packing.filter(p=>p.done).length
-
-  async function handleScan(file) {
-    if (!file) return
-    setScanning(true)
-    try {
-      const base64 = await new Promise((res, rej) => {
-        const r = new FileReader()
-        r.onload = () => res(r.result.split(',')[1])
-        r.onerror = rej
-        r.readAsDataURL(file)
-      })
-      const { data, error: fnError } = await supabase.functions.invoke('claude-proxy', {
-        body: {
-          imageBase64: base64,
-          mediaType: file.type || 'image/jpeg',
-          prompt: 'Extract all items that should be packed or brought on a trip from this image. Return ONLY a JSON array of strings, no explanation, no markdown. Example: ["passport","sunscreen","sandals"]. If nothing packing-related is found, return [].'
-        }
-      })
-      if (fnError) throw new Error(fnError.message)
-      const raw = data?.content?.[0]?.text || '[]'
-      const parsed = JSON.parse(raw.replace(/```json|```/g,'').trim())
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        const newItems = parsed.map(text => ({ id:genId(), text, category:cat, done:false }))
-        onChange([...packing, ...newItems])
-      }
-    } catch(e) { alert('Scan failed: ' + e.message) }
-    setScanning(false)
-  }
-
   return (
     <div>
-      {/* Scan button */}
-      <input ref={fileRef} type="file" accept="image/*" style={{ display:'none' }} onChange={e=>handleScan(e.target.files[0])}/>
-      <div style={{ display:'flex', justifyContent:'flex-end', marginBottom:12 }}>
-        <button onClick={()=>fileRef.current.click()} disabled={scanning} style={{ display:'flex', alignItems:'center', gap:6, padding:'7px 14px', background:`${tripColor||C.accent}12`, border:`1px solid ${tripColor||C.accent}33`, borderRadius:10, color:tripColor||C.accent, fontSize:12, fontWeight:500, cursor:'pointer' }}>
-          {scanning ? '⏳ Scanning...' : '📷 Scan packing list'}
-        </button>
-      </div>
       {tot>0&&<div style={{ marginBottom:16 }}>
         <div style={{ display:'flex', justifyContent:'space-between', fontSize:12, color:C.textMd, marginBottom:5 }}><span>{done}/{tot} packed</span><span>{tot-done} left</span></div>
         <div style={{ height:5, borderRadius:3, background:C.bgAlt, overflow:'hidden' }}><div style={{ height:'100%', width:`${tot?Math.round(done/tot*100):0}%`, background:`linear-gradient(90deg,${tripColor||C.accent},${tripColor||C.accent}88)`, borderRadius:3 }}/></div>
@@ -994,41 +942,9 @@ function ShareModal({ trip, onShare, onClose }) {
 
 function TripDetail({ trip, onUpdate, onBack, onDelete, onShare, isOwner }) {
   const [tab,setTab]=useState('flights'), [editNotes,setEditNotes]=useState(false), [notes,setNotes]=useState(trip.notes||''), [showShare,setShowShare]=useState(false)
-  const [scanningNotes, setScanningNotes] = useState(false)
-  const notesScanRef = useRef()
   const tabs=[{id:'flights',icon:'✈️',lbl:'Flights'},{id:'lodging',icon:'🏨',lbl:'Lodging'},{id:'itinerary',icon:'📅',lbl:'Days'},{id:'packing',icon:'🧳',lbl:'Packing'},{id:'budget',icon:'💰',lbl:'Budget'},{id:'notes',icon:'📝',lbl:'Notes'}]
   function upd(field,val) { onUpdate({...trip,[field]:val}) }
   const until=daysUntil(trip.start_date)
-
-  async function handleNotesScan(file) {
-    if (!file) return
-    setScanningNotes(true)
-    try {
-      const base64 = await new Promise((res, rej) => {
-        const r = new FileReader()
-        r.onload = () => res(r.result.split(',')[1])
-        r.onerror = rej
-        r.readAsDataURL(file)
-      })
-      const { data, error: fnError } = await supabase.functions.invoke('claude-proxy', {
-        body: {
-          imageBase64: base64,
-          mediaType: file.type || 'image/jpeg',
-          prompt: 'Extract all important information, details, or notes from this image. Write a clear, organized summary in plain text. Include dates, times, addresses, confirmation numbers, or any other key details you see.'
-        }
-      })
-      if (fnError) throw new Error(fnError.message)
-      const extracted = data?.content?.[0]?.text?.trim() || ''
-      if (extracted) {
-        const newNotes = notes ? notes + '\n\n' + extracted : extracted
-        setNotes(newNotes)
-        setEditNotes(true)
-      }
-    } catch(e) {
-      alert('Scan failed: ' + e.message)
-    }
-    setScanningNotes(false)
-  }
   return (
     <div style={{ minHeight:'100%', background:C.bg }}>
       {/* Trip header */}
@@ -1065,19 +981,7 @@ function TripDetail({ trip, onUpdate, onBack, onDelete, onShare, isOwner }) {
         {tab==='itinerary'&&<ItinerarySection trip={trip} itinerary={trip.itinerary||{}} onChange={v=>upd('itinerary',v)}/>}
         {tab==='packing'&&<PackingSection packing={trip.packing||[]} onChange={v=>upd('packing',v)} tripColor={trip.color}/>}
         {tab==='budget'&&<BudgetSection budget={trip.budget||{total:'',items:[]}} onChange={v=>upd('budget',v)} tripColor={trip.color}/>}
-        {tab==='notes'&&<div>
-          {/* Scan button for notes */}
-          <input ref={notesScanRef} type="file" accept="image/*" style={{ display:'none' }} onChange={e=>handleNotesScan(e.target.files[0])}/>
-          <div style={{ display:'flex', justifyContent:'flex-end', marginBottom:10 }}>
-            <button onClick={()=>notesScanRef.current.click()} disabled={scanningNotes} style={{ display:'flex', alignItems:'center', gap:6, padding:'7px 14px', background:`${trip.color||C.accent}12`, border:`1px solid ${trip.color||C.accent}33`, borderRadius:10, color:trip.color||C.accent, fontSize:12, fontWeight:500, cursor:'pointer' }}>
-              {scanningNotes ? '⏳ Scanning...' : '📷 Scan into notes'}
-            </button>
-          </div>
-          {editNotes
-            ?<><textarea value={notes} onChange={e=>setNotes(e.target.value)} rows={12} autoFocus placeholder="Notes about this trip..." style={{...fi,resize:'none',marginBottom:12,lineHeight:1.7}}/><div style={{ display:'flex', gap:9 }}><Btn onClick={()=>{upd('notes',notes);setEditNotes(false)}} color={trip.color||C.accent}>Save</Btn><Btn onClick={()=>{setNotes(trip.notes||'');setEditNotes(false)}} variant="outline" color={C.textMd}>Cancel</Btn></div></>
-            :<div onClick={()=>setEditNotes(true)} style={{ minHeight:100, background:C.bgCard, border:`1.5px solid ${C.border}`, borderRadius:14, padding:'14px', cursor:'text', lineHeight:1.7, fontSize:14, color:trip.notes?C.textMd:C.textLt, whiteSpace:'pre-wrap', fontStyle:trip.notes?'normal':'italic', boxShadow:`0 2px 8px ${C.shadow}` }}>{trip.notes||'Tap to add notes...'}</div>
-          }
-        </div>}
+        {tab==='notes'&&<div>{editNotes?<><textarea value={notes} onChange={e=>setNotes(e.target.value)} rows={12} autoFocus placeholder="Notes about this trip..." style={{...fi,resize:'none',marginBottom:12,lineHeight:1.7}}/><div style={{ display:'flex', gap:9 }}><Btn onClick={()=>{upd('notes',notes);setEditNotes(false)}} color={trip.color||C.accent}>Save</Btn><Btn onClick={()=>{setNotes(trip.notes||'');setEditNotes(false)}} variant="outline" color={C.textMd}>Cancel</Btn></div></>:<div onClick={()=>setEditNotes(true)} style={{ minHeight:100, background:C.bgCard, border:`1.5px solid ${C.border}`, borderRadius:14, padding:'14px', cursor:'text', lineHeight:1.7, fontSize:14, color:trip.notes?C.textMd:C.textLt, whiteSpace:'pre-wrap', fontStyle:trip.notes?'normal':'italic', boxShadow:`0 2px 8px ${C.shadow}` }}>{trip.notes||'Tap to add notes...'}</div>}</div>}
       </div>
       {showShare&&<ShareModal trip={trip} onShare={onShare} onClose={()=>setShowShare(false)}/>}
     </div>
@@ -1088,21 +992,9 @@ function TripsTab({ trips, setTrips, user, saveTrip, deleteTrip, shareTrip }) {
   const [activeTrip,setActiveTrip]=useState(null), [showNew,setShowNew]=useState(false)
   const nextTrip=trips.filter(t=>t.start_date&&daysUntil(t.start_date)>=0).sort((a,b)=>a.start_date.localeCompare(b.start_date))[0]
 
-  function addTrip(trip) {
-    const t={...trip, _owner:user.id}
-    setTrips(ts=>[...ts,t])
-    saveTrip(t)
-    setShowNew(false)
-  }
-  function updateTrip(updated) {
-    setTrips(ts=>ts.map(t=>t.id!==updated.id?t:updated))
-    setActiveTrip(updated)
-    saveTrip(updated)
-  }
-  function handleDelete(id) {
-    deleteTrip(id)
-    setActiveTrip(null)
-  }
+  function addTrip(trip) { const t={...trip,_owner:user.id}; setTrips(ts=>[...ts,t]); saveTrip(t); setShowNew(false) }
+  function updateTrip(updated) { setTrips(ts=>ts.map(t=>t.id!==updated.id?t:updated)); setActiveTrip(updated); saveTrip(updated) }
+  function handleDelete(id) { deleteTrip(id); setActiveTrip(null) }
 
   if (activeTrip) return <TripDetail trip={activeTrip} onUpdate={updateTrip} onBack={()=>setActiveTrip(null)} onDelete={()=>handleDelete(activeTrip.id)} onShare={shareTrip} isOwner={activeTrip._owner===user.id}/>
 
@@ -1225,8 +1117,7 @@ export default function App() {
       {id:'shopping',title:'Shopping',icon:'◈',color:'#3BA89A',cards:[{id:'s1',text:'Add your first item',done:false,priority:'medium'}]},
       {id:'todo',title:'To-Do',icon:'◉',color:'#D95F3B',cards:[{id:'t1',text:'Get things done',done:false,priority:'high'}]},
     ])
-    const {data:owned, error:ownedErr}=await supabase.from('trips').select('*').eq('user_id',u.id)
-    if(ownedErr) console.error('loadTrips error:', ownedErr)
+    const {data:owned}=await supabase.from('trips').select('*').eq('user_id',u.id)
     const {data:memberships}=await supabase.from('trip_members').select('trip_id').eq('user_id',u.id)
     let shared=[]
     if(memberships?.length){
@@ -1250,12 +1141,11 @@ export default function App() {
 
   async function saveTrip(trip) {
     const { _owner, ...tripData } = trip
-    const ownerId = _owner || user.id
     const { error } = await supabase.from('trips').upsert(
-      { id: trip.id, user_id: ownerId, data: tripData },
+      { id: trip.id, user_id: user.id, data: tripData },
       { onConflict: 'id' }
     )
-    if (error) console.error('saveTrip error:', error)
+    if (error) console.error('saveTrip error:', error.message)
   }
   async function deleteTrip(id) {
     await supabase.from('trip_members').delete().eq('trip_id', id)
