@@ -207,6 +207,50 @@ function Btn({ children, onClick, color, variant='solid', small, disabled, full 
 // ─── AI IMAGE SCAN ────────────────────────────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════════════
 
+// ─── Image compression helper (keeps images under 4MB for Claude API) ─────────
+async function compressImage(file, maxSizeMB = 4) {
+  return new Promise((resolve) => {
+    const img = new Image()
+    const url = URL.createObjectURL(file)
+    img.onload = () => {
+      URL.revokeObjectURL(url)
+      const canvas = document.createElement('canvas')
+      let { width, height } = img
+      // Scale down if needed
+      const maxPx = 2000
+      if (width > maxPx || height > maxPx) {
+        const ratio = Math.min(maxPx / width, maxPx / height)
+        width = Math.round(width * ratio)
+        height = Math.round(height * ratio)
+      }
+      canvas.width = width
+      canvas.height = height
+      canvas.getContext('2d').drawImage(img, 0, 0, width, height)
+      // Try quality 0.8 first, then lower if still too big
+      let quality = 0.8
+      const tryEncode = () => {
+        const dataUrl = canvas.toDataURL('image/jpeg', quality)
+        const base64 = dataUrl.split(',')[1]
+        const sizeMB = (base64.length * 0.75) / 1024 / 1024
+        if (sizeMB > maxSizeMB && quality > 0.2) {
+          quality -= 0.15
+          tryEncode()
+        } else {
+          resolve({ base64, mediaType: 'image/jpeg' })
+        }
+      }
+      tryEncode()
+    }
+    img.onerror = () => {
+      // Fallback: just read as-is
+      const r = new FileReader()
+      r.onload = () => resolve({ base64: r.result.split(',')[1], mediaType: file.type || 'image/jpeg' })
+      r.readAsDataURL(file)
+    }
+    img.src = url
+  })
+}
+
 function AIScanModal({ list, onAdd, onClose }) {
   const [status, setStatus]   = useState('idle') // idle | scanning | done | error
   const [items, setItems]     = useState([])
@@ -220,13 +264,7 @@ function AIScanModal({ list, onAdd, onClose }) {
     setItems([]); setSelected(new Set()); setErrMsg('')
 
     try {
-      const mediaType = file.type && file.type.startsWith('image/') ? file.type : 'image/jpeg'
-      const base64 = await new Promise((res, rej) => {
-        const r = new FileReader()
-        r.onload = () => res(r.result.split(',')[1])
-        r.onerror = () => rej(new Error('Could not read image file'))
-        r.readAsDataURL(file)
-      })
+      const { base64, mediaType } = await compressImage(file)
 
       const { data, error: fnError } = await supabase.functions.invoke('claude-proxy', {
         body: {
@@ -349,16 +387,11 @@ function CardForm({ initial, listColor, submitLabel, onSubmit, onDelete }) {
     if (!file) return
     setScanning(true)
     try {
-      const base64 = await new Promise((res, rej) => {
-        const r = new FileReader()
-        r.onload = () => res(r.result.split(',')[1])
-        r.onerror = rej
-        r.readAsDataURL(file)
-      })
+      const { base64, mediaType } = await compressImage(file)
       const { data, error: fnError } = await supabase.functions.invoke('claude-proxy', {
         body: {
           imageBase64: base64,
-          mediaType: file.type || 'image/jpeg',
+          mediaType,
           prompt: 'Summarize the key information from this image into a concise task or note — one or two sentences max. Return only the text, no explanation.'
         }
       })
